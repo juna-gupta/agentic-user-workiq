@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/IncidentAgent.Core/IncidentAgent.Core.csproj" />
+    <Project Path="src/IncidentAgent/IncidentAgent.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/IncidentAgent.Tests/IncidentAgent.Tests.csproj" />
+  </Folder>
+</Solution>
