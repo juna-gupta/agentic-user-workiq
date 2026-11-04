@@ -1,10 +1,52 @@
 using IncidentAgent.Agent;
+using IncidentAgent.Hosting;
 using IncidentAgent.Llm;
+using IncidentAgent.WorkIq;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace IncidentAgent.Tests;
 
 public class ConfigurationTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Rejects_nonpositive_file_transfer_timeouts(int timeout)
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["WorkIq:FileTransferTimeoutSeconds"] = timeout.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        }).Build();
+        using var services = new ServiceCollection().AddLogging().AddIncidentAgent(configuration).BuildServiceProvider();
+
+        var error = Assert.Throws<OptionsValidationException>(() => services.GetRequiredService<IOptions<WorkIqOptions>>().Value);
+
+        Assert.Contains("WorkIq:FileTransferTimeoutSeconds", error.Message);
+    }
+
+    [Fact]
+    public async Task File_transfer_factory_uses_isolated_transport_without_redirects_cookies_or_uri_logging()
+    {
+        using var services = new ServiceCollection().AddLogging()
+            .AddIncidentAgent(new ConfigurationBuilder().Build()).BuildServiceProvider();
+        var clients = services.GetRequiredService<IHttpClientFactory>();
+        using var http = clients.CreateClient(WorkIqClientFactory.FileTransferHttpClientName);
+        Assert.Equal(Timeout.InfiniteTimeSpan, http.Timeout);
+        var handler = services.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler(WorkIqClientFactory.FileTransferHttpClientName);
+        while (handler is DelegatingHandler delegating)
+        {
+            Assert.DoesNotContain("Logging", handler.GetType().Name);
+            handler = delegating.InnerHandler!;
+        }
+
+        var primary = Assert.IsType<SocketsHttpHandler>(handler);
+        Assert.False(primary.AllowAutoRedirect);
+        Assert.False(primary.UseCookies);
+        await using var client = services.GetRequiredService<IWorkIqFactory>().Create(_ => throw new InvalidOperationException("No token needed yet."));
+    }
+
     [Theory]
     [InlineData("https://my-resource.openai.azure.com/", "https://my-resource.openai.azure.com/openai/v1/")]
     [InlineData("https://my-resource.openai.azure.com", "https://my-resource.openai.azure.com/openai/v1/")]

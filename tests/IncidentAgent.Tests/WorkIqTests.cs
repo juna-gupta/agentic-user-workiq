@@ -6,6 +6,26 @@ namespace IncidentAgent.Tests;
 
 public class WorkIqTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void File_preparation_errors_are_classified_without_disclosing_the_body(bool structured)
+    {
+        const string body = """{"statusCode":403,"error":{"message":"secret transfer URL"}}""";
+        var result = new CallToolResult
+        {
+            IsError = true,
+            StructuredContent = structured ? FakeWorkIq.Json(body) : null,
+            Content = structured ? [] : [new TextContentBlock { Text = body }],
+        };
+
+        var error = Assert.Throws<WorkIqFileTransferException>(() => WorkIqEnvelope.TransferData("do_action", result));
+
+        Assert.Equal(WorkIqFailure.Forbidden, error.Failure);
+        Assert.Equal(403, error.StatusCode);
+        Assert.DoesNotContain("secret transfer URL", error.ToString());
+    }
+
     [Fact]
     public void Encodes_sharing_urls_the_way_graph_documents()
     {

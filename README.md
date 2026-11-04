@@ -105,6 +105,12 @@ recommended approach is to discover them at run time with Work IQ's `search_path
 The model never sees Work IQ's own tools. It only gets two tools the app defines: `get_runbook_cases`, which is local,
 and `find_meeting`, which wraps a calendar read.
 
+For application code, the Work IQ client also exposes `DownloadFileAsync` and `UploadFileAsync`. MCP prepares a
+transfer; a separate HTTP client attaches the agent user's Work IQ token and streams bytes directly between Work IQ
+and absolute local file paths, without base64 payloads, whole-file buffering, or model context. These optional APIs
+are not model tools and do not change Iris's runbook or deck workflows. See
+[file transfers](docs/WORKIQ-NOTES.md#file-transfers-without-model-context) for usage and service prerequisites.
+
 What Work IQ adds here is:
 - **The identity and permission model:** one delegated scope for the agent user, and reach limited to what's shared
   with her.
@@ -128,7 +134,7 @@ src/IncidentAgent.Core/      Teams-agnostic logic (unit tested)
   Shiproom/                  CalendarReader, DeckFinder (invite links), DeckReader (.pptx)
   Knowledge/                 KnowledgeBase (parses and ranks the runbook), RunbookStore (reads it from OneDrive),
                              RunbookCitations (turns case IDs in a reply into citations)
-  WorkIq/                    MCP client for Work IQ (fetch, fetch_blob), paths, error mapping
+  WorkIq/                    Work IQ MCP client, authenticated HTTP file streaming, paths, error mapping
   Llm/                       Prompts and model options (Azure OpenAI or OpenAI)
 src/IncidentAgent/           ASP.NET Core host
   Program.cs                 Teams SDK + /health
@@ -183,6 +189,7 @@ variables (for example `$env:AzureAd__ClientId`) or `--AzureAd:ClientId=...` arg
 | --- | --- | --- | --- |
 | `AzureAd` | `TenantId`, `ClientId`, `ClientCredentials` | empty (required) | The **agent blueprint**'s app ID and credential. The Teams SDK validates incoming requests and gets agentic user tokens with it. |
 | `WorkIq` | `Endpoint`, `Scope`, `TimeoutSeconds` | Work IQ MCP, `api://workiq.svc.cloud.microsoft/.default`, `45` | |
+| | `FileTransferTimeoutSeconds` | `240` | Positive per-request timeout for file content/status HTTP, including body streaming; separate from the MCP timeout |
 | `AzureOpenAI` | `Provider` | `AzureOpenAI` | `AzureOpenAI`, or `OpenAI` for OpenAI or any OpenAI-compatible server |
 | | `Endpoint` | empty | Required for Azure OpenAI. For OpenAI, leave empty for `https://api.openai.com/v1/` or set another base URL. |
 | | `Deployment` | empty (required) | The Azure deployment name, or the OpenAI model name |

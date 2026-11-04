@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 namespace IncidentAgent.WorkIq;
 
 /// <summary>
-/// Builds the Work IQ paths the agent reads and validates the IDs that go into them. The paths are hard-coded for now.
+/// Builds the Work IQ paths the agent calls and validates the IDs that go into them. The paths are hard-coded for now.
 /// The recommended approach is to discover them at run time with Work IQ's <c>search_paths</c> and <c>get_schema</c>.
 /// </summary>
 public static partial class WorkIqPaths
@@ -15,6 +15,10 @@ public static partial class WorkIqPaths
     public const string DriveItemFields = "id,name,webUrl,lastModifiedDateTime,size,file,folder,parentReference";
 
     public const string EventFields = "id,subject,start,end,organizer,attendees,body,webLink,isCancelled";
+
+    public const string DownloadFileDetails = "/sharepoint/getDownloadFileDetails";
+
+    public const string UploadFileDetails = "/sharepoint/getUploadFileDetails";
 
     public static string ChannelMessage(string teamId, string channelId, string messageId) =>
         $"/teams/{Id(teamId)}/channels/{Id(channelId)}/messages/{Id(messageId)}";

@@ -72,6 +72,12 @@ internal sealed class FakeWorkIq : IWorkIq
     public Task<IReadOnlyList<PathCapability>> SearchPathsAsync(string filter, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<PathCapability>>([]);
 
+    public Task<FileTransferResult> DownloadFileAsync(DownloadFileRequest request, CancellationToken cancellationToken) =>
+        throw new InvalidOperationException("Unexpected file download.");
+
+    public Task<FileTransferResult> UploadFileAsync(UploadFileRequest request, CancellationToken cancellationToken) =>
+        throw new InvalidOperationException("Unexpected file upload.");
+
     public static JsonElement Json(string json)
     {
         using var doc = JsonDocument.Parse(json);
