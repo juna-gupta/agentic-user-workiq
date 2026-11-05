@@ -419,6 +419,38 @@ public class WorkIqFileTransferTests
     }
 
     [Fact]
+    public async Task Uses_the_session_expiry_that_status_responses_extend()
+    {
+        await using var h = new Harness();
+        var bytes = Data(8);
+        var source = h.PathFor("upload.bin");
+        await File.WriteAllBytesAsync(source, bytes);
+        h.Preparation = Handoff(bytes.Length, "upload");
+        var ticketExpiry = DateTimeOffset.UtcNow.AddSeconds(2);
+        Action(h.Preparation)["expiresAt"] = ticketExpiry;
+        h.Send = async (request, ct) =>
+        {
+            var next = request.Content!.Headers.ContentRange!.To!.Value + 1;
+            if (next < bytes.Length)
+            {
+                // Outlive the original ticket; the status response extends the session.
+                var wait = ticketExpiry - DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(200);
+                if (wait > TimeSpan.Zero)
+                {
+                    await Task.Delay(wait, ct);
+                }
+            }
+
+            return StatusResponse(bytes.Length, next);
+        };
+
+        await h.Client.UploadFileAsync(new UploadFileRequest(source, "drive"), default);
+
+        Assert.Equal(2, h.Requests.Count(r => r.Method == HttpMethod.Put));
+        Assert.DoesNotContain(h.Requests, r => r.Method == HttpMethod.Get);
+    }
+
+    [Fact]
     public async Task Clamps_fragments_below_the_exclusive_workiq_http_ingress_limit()
     {
         await using var h = new Harness();

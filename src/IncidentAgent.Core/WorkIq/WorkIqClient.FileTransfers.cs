@@ -160,9 +160,10 @@ public sealed partial class WorkIqClient
             var length = (int)Math.Min(prepared.ChunkBytes, total - offset);
             var next = offset + length;
             using var fragment = new FileFragmentContent(source, offset, length, total, request.ContentType);
+            UploadProgress confirmed;
             try
             {
-                await TransferRequestAsync(prepared, HttpMethod.Put, false, fragment, async (response, ct) =>
+                confirmed = await TransferRequestAsync(prepared, HttpMethod.Put, false, fragment, async (response, ct) =>
                 {
                     if (response.StatusCode != (next == total ? HttpStatusCode.OK : HttpStatusCode.Accepted))
                     {
@@ -175,14 +176,16 @@ public sealed partial class WorkIqClient
                         throw UnknownUpload(prepared, progress.RecoveryReason);
                     }
 
-                    return true;
+                    return progress;
                 }, cancellationToken);
             }
             catch (WorkIqFileTransferException failure)
             {
-                await ReconcileUploadAsync(prepared, next, failure, cancellationToken);
+                confirmed = await ReconcileUploadAsync(prepared, next, failure, cancellationToken);
             }
 
+            // Work IQ can extend the upload session, so later fragments use the latest expiry it reported.
+            prepared = prepared with { ExpiresAt = confirmed.ExpiresAt };
             offset = next;
         }
 
@@ -333,7 +336,7 @@ public sealed partial class WorkIqClient
         }
     }
 
-    private async Task ReconcileUploadAsync(PreparedFile prepared, long expectedOffset, WorkIqFileTransferException failure, CancellationToken cancellationToken)
+    private async Task<UploadProgress> ReconcileUploadAsync(PreparedFile prepared, long expectedOffset, WorkIqFileTransferException failure, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         UploadProgress progress;
@@ -359,6 +362,8 @@ public sealed partial class WorkIqClient
         {
             throw UnknownUpload(prepared, progress.RecoveryReason, failure);
         }
+
+        return progress;
     }
 
     private static bool ConfirmsProgress(UploadProgress progress, long expectedOffset, long total) =>
@@ -420,12 +425,12 @@ public sealed partial class WorkIqClient
 
             if (state == "completed" && ranges.GetArrayLength() == 0)
             {
-                return new UploadProgress(state, prepared.SizeBytes, recovery);
+                return new UploadProgress(state, prepared.SizeBytes, recovery, expiresAt);
             }
 
             if (state == "indeterminate")
             {
-                return new UploadProgress(state, null, recovery ?? "upload_outcome_unknown");
+                return new UploadProgress(state, null, recovery ?? "upload_outcome_unknown", expiresAt);
             }
 
             if (state is not ("prepared" or "active") || ranges.GetArrayLength() != 1
@@ -436,7 +441,7 @@ public sealed partial class WorkIqClient
                 throw ContractError(prepared.TransferId);
             }
 
-            return new UploadProgress(state, offset, recovery);
+            return new UploadProgress(state, offset, recovery, expiresAt);
         }
         catch (JsonException)
         {
@@ -494,7 +499,7 @@ public sealed partial class WorkIqClient
     private sealed record PreparedFile(string TransferId, Uri ContentUrl, Uri StatusUrl, DateTimeOffset ExpiresAt,
         long SizeBytes, string Name, string ContentType, int ChunkBytes);
 
-    private sealed record UploadProgress(string State, long? NextOffset, string? RecoveryReason);
+    private sealed record UploadProgress(string State, long? NextOffset, string? RecoveryReason, DateTimeOffset ExpiresAt);
 
     private sealed class FileFragmentContent : HttpContent
     {

@@ -134,9 +134,16 @@ public static class WorkIqEnvelope
             && sc.ValueKind == JsonValueKind.Number && sc.TryGetInt32(out var code) ? code : 0;
         if (result.IsError is true || status is < 200 or >= 300)
         {
-            throw new WorkIqFileTransferException(WorkIqException.KindFor((System.Net.HttpStatusCode)status),
-                $"Work IQ {tool} could not prepare the file transfer ({status}). Check provider availability and authorization.",
-                statusCode: status == 0 ? null : status);
+            // A provider failure can arrive as a 200 envelope marked isError, with the provider's status in a nested text item.
+            if (status is 0 or (>= 200 and < 300) && ProviderStatus(payload.Json) is { } provider)
+            {
+                status = provider;
+            }
+
+            int? reported = status is 0 or (>= 200 and < 300) ? null : status;
+            throw new WorkIqFileTransferException(reported is { } s ? WorkIqException.KindFor((System.Net.HttpStatusCode)s) : WorkIqFailure.Unavailable,
+                $"Work IQ {tool} could not prepare the file transfer ({reported ?? 0}). Check provider availability and authorization.",
+                statusCode: reported);
         }
 
         if (payload.Json is not { } root || !root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
@@ -303,6 +310,26 @@ public static class WorkIqEnvelope
         }
 
         return new WorkIqPayload(json, blocks);
+    }
+
+    private static int? ProviderStatus(JsonElement? root)
+    {
+        if (root is not { } r || !r.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        foreach (var item in data.EnumerateArray())
+        {
+            if (TryParseObject(Str(item, "text"), out var inner)
+                && (inner.TryGetProperty("StatusCode", out var sc) || inner.TryGetProperty("statusCode", out sc))
+                && sc.ValueKind == JsonValueKind.Number && sc.TryGetInt32(out var code) && code is >= 400 and < 600)
+            {
+                return code;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Tool errors come back as <c>{"error":"…","requestId":"…"}</c> text.</summary>

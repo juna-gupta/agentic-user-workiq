@@ -109,7 +109,8 @@ For application code, the Work IQ client also exposes `DownloadFileAsync` and `U
 transfer; a separate HTTP client attaches the agent user's Work IQ token and streams bytes directly between Work IQ
 and absolute local file paths, without base64 payloads, whole-file buffering, or model context. These optional APIs
 are not model tools and do not change Iris's runbook or deck workflows. See
-[file transfers](docs/WORKIQ-NOTES.md#file-transfers-without-model-context) for usage and service prerequisites.
+[file transfers](docs/WORKIQ-NOTES.md#file-transfers-without-model-context) for usage, the extra Work IQ scopes they
+need, and service prerequisites.
 
 What Work IQ adds here is:
 - **The identity and permission model:** one delegated scope for the agent user, and reach limited to what's shared

@@ -8,7 +8,9 @@ How this sample uses Work IQ as an agentic user: access, the tools it calls, rea
   - client: the **agent identity**;
   - principal: the **agent user**.
 
-  No Graph permissions and no application permissions. [scripts](../scripts/README.md) creates the grant.
+  No Graph permissions and no application permissions. [scripts](../scripts/README.md) creates the grant. The
+  optional file-transfer APIs need two more Work IQ scopes; see
+  [File transfers without model context](#file-transfers-without-model-context).
 - **Token.** The Teams SDK's `GetAgenticUserTokenAsync(identity, "api://workiq.svc.cloud.microsoft/.default")` runs
   the agent user flow: blueprint, then agent identity, then agent user. The token's `oid` is Iris, `scp` is
   `WorkIQAgent.Ask`, and `azp` is the agent identity. Nobody signs in.
@@ -67,20 +69,27 @@ The receipt contains the absolute local path, prepared file name/type, byte coun
 That ID is **not** a remote driveItem ID: uploads do not return the completed driveItem or its final renamed name.
 Resolve the remote item separately before using it as `remoteDriveItemId`.
 
-**Preparation and authorization.** Published Work IQ discovery/schema currently advertise:
+**Preparation and authorization.** The client prepares each transfer through these Work IQ provider paths:
 
 | MCP tool | Provider path | Structured `jsonBody` |
 | --- | --- | --- |
 | `call_function` | `/sharepoint/getDownloadFileDetails` | `documentLibraryId`, `fileId` |
 | `do_action` | `/sharepoint/getUploadFileDetails` | `documentLibraryId`, `fileName`, `fileSize`, `parentFolderId`, `mimeType`, `conflictBehavior` |
 
-These are provider paths, not direct calls to the underlying SharePoint MCP tools. Discovery was checked through
-the available signed-in connection; verify the paths and structured function parameters with `search_paths` and
-`get_schema` under the application's agent identity and configured endpoint before deployment.
+These are provider paths, not direct calls to the underlying SharePoint MCP tools. They were checked by calling them
+directly as an agent user; confirm them under your own agent identity and endpoint before deployment.
 
-The service also needs compatible file-transfer response bindings, its file-transfer capability and response
-conversion enabled, and caller/provider permission to perform the operation. The existing `WorkIQAgent.Ask` grant
-is retained; provider/write policy and feature gates still apply. The client does not grant additional access.
+Each path needs a delegated Work IQ scope in addition to `WorkIQAgent.Ask`, on the same grant (client: the agent
+identity, principal: the agent user):
+
+| Operation | Scope |
+| --- | --- |
+| Download (`getDownloadFileDetails`) | `WorkIQ.Read` |
+| Upload (`getUploadFileDetails`) | `WorkIQ.Act` |
+
+Without it, preparation fails with 403. The Iris workflows don't use these APIs, so [scripts](../scripts/README.md)
+grants only `WorkIQAgent.Ask`. Add the scopes your application needs to that grant; tokens issued after the change
+carry them. Provider policy and feature gates still apply, and the client doesn't grant any access itself.
 
 The authoritative handoff is in the returned business data's `_meta["com.microsoft.workiq/clientAction"]`, not MCP
 transport metadata or prose instructions. The client validates its version, direction, expiry, method, sizes, and
@@ -108,13 +117,16 @@ explicitly `fail`; callers can select `replace` or `rename`.
 `Content-Range`. Returned chunk recommendations/alignment are honored, with every PUT strictly below Work IQ's
 60 MiB ingress ceiling. The final fragment may be unaligned. A 202 acknowledgement must confirm the exact next
 offset; final success requires a completed Work IQ status with matching size/direction and no remaining ranges.
+Each status response can extend the upload session, and the client checks later fragments against the latest
+`expiresAt` it reports.
 
 An ambiguous PUT is reconciled through the separately issued status URL. The client proceeds only after exact
 confirmed advancement or final completion. Unchanged, partial, excessive, malformed, missing, expired, or
 indeterminate status stops the upload without replaying bytes or creating a replacement session.
 `WorkIqFileTransferException` retains the HTTP failure classification/status, transfer ID when available, and a
-bounded `RecoveryReason` such as `upload_outcome_unknown` or `upload_session_unavailable`. Opening files and
-writing/publishing downloads preserve local I/O errors.
+bounded `RecoveryReason` such as `upload_outcome_unknown` or `upload_session_unavailable`. A preparation error that
+Work IQ returns inside a 200 envelope is classified by the provider's own status, so an unknown file ID is
+`NotFound` (404). Opening files and writing/publishing downloads preserve local I/O errors.
 
 `WorkIq:FileTransferTimeoutSeconds` defaults to **240 seconds per HTTP request**, including body streaming; it is
 independent of the MCP timeout. Caller cancellation remains `OperationCanceledException` and stops local work,
@@ -122,8 +134,9 @@ but does not prove a remote upload was rolled back. Download resume and cross-pr
 implemented.
 
 Tests use scripted MCP/HTTP and isolated local files, including large binary transfers and recovery failures.
-They do not establish tenant feature availability. A live upload/download smoke test requires an explicitly
-authorized target library; none is part of the automated suite.
+They do not establish tenant feature availability. A live run as an agent user against its own OneDrive covered
+downloads, a small and a 25 MiB multi-chunk upload with matching hashes, `replace`, local overwrite handling, an
+unknown file ID, and cleanup of temporary files. No live test is part of the automated suite.
 
 ## Reading a deck
 
