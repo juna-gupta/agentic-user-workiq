@@ -85,6 +85,12 @@ public interface IWorkIq
     /// <summary>Downloads a file's bytes, e.g. <c>/drives/{id}/items/{id}/content</c>.</summary>
     Task<BlobResult> FetchBlobAsync(string path, CancellationToken cancellationToken);
 
+    /// <summary>Streams a prepared Work IQ download to an absolute local path, without returning file bytes.</summary>
+    Task<FileTransferResult> DownloadFileAsync(DownloadFileRequest request, CancellationToken cancellationToken);
+
+    /// <summary>Streams a local file through a prepared Work IQ upload session, without MCP content payloads.</summary>
+    Task<FileTransferResult> UploadFileAsync(UploadFileRequest request, CancellationToken cancellationToken);
+
     /// <summary>Lists the paths matching <paramref name="filter"/> and what Work IQ allows on each.</summary>
     Task<IReadOnlyList<PathCapability>> SearchPathsAsync(string filter, CancellationToken cancellationToken);
 }

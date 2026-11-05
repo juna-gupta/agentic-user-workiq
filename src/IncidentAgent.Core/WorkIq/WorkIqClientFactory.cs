@@ -13,6 +13,9 @@ public sealed class WorkIqClientFactory(IHttpClientFactory httpClients, IOptions
 {
     public const string HttpClientName = "workiq";
 
+    public const string FileTransferHttpClientName = "workiq-files";
+
     public WorkIqClient Create(Func<CancellationToken, Task<string>> accessToken) =>
-        new(httpClients.CreateClient(HttpClientName), options.Value, accessToken, loggers.CreateLogger<WorkIqClient>());
+        new(httpClients.CreateClient(HttpClientName), options.Value, accessToken, loggers.CreateLogger<WorkIqClient>(),
+            httpClients.CreateClient(FileTransferHttpClientName));
 }

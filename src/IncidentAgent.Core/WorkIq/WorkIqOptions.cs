@@ -14,4 +14,7 @@ public sealed class WorkIqOptions
     public string Scope { get; set; } = "api://workiq.svc.cloud.microsoft/.default";
 
     public int TimeoutSeconds { get; set; } = 45;
+
+    /// <summary>Budget for each file-content/status HTTP request, including streaming its body.</summary>
+    public int FileTransferTimeoutSeconds { get; set; } = 240;
 }

@@ -22,7 +22,8 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddIncidentAgent(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddOptions<WorkIqOptions>().Bind(configuration.GetSection(WorkIqOptions.Section))
-            .Validate(o => o.Scope.Length > 0, "WorkIq:Scope is required.");
+            .Validate(o => o.Scope.Length > 0, "WorkIq:Scope is required.")
+            .Validate(o => o.FileTransferTimeoutSeconds > 0, "WorkIq:FileTransferTimeoutSeconds must be positive.");
         services.AddOptions<LlmOptions>().Bind(configuration.GetSection(LlmOptions.Section)).ValidateOnStart();
         services.AddSingleton<IValidateOptions<LlmOptions>, LlmOptionsValidator>();
         services.AddOptions<AgentOptions>().Bind(configuration.GetSection(AgentOptions.Section));
@@ -41,6 +42,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(TimeProvider.System);
 
         services.AddHttpClient(WorkIqClientFactory.HttpClientName);
+        services.AddHttpClient(WorkIqClientFactory.FileTransferHttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan)
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false })
+            .RemoveAllLoggers();
         services.AddSingleton<IWorkIqFactory, WorkIqClientFactory>();
         services.AddSingleton<AgentTokens>();
 

@@ -6,6 +6,65 @@ namespace IncidentAgent.Tests;
 
 public class WorkIqTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void File_preparation_errors_are_classified_without_disclosing_the_body(bool structured)
+    {
+        const string body = """{"statusCode":403,"error":{"message":"secret transfer URL"}}""";
+        var result = new CallToolResult
+        {
+            IsError = true,
+            StructuredContent = structured ? FakeWorkIq.Json(body) : null,
+            Content = structured ? [] : [new TextContentBlock { Text = body }],
+        };
+
+        var error = Assert.Throws<WorkIqFileTransferException>(() => WorkIqEnvelope.TransferData("do_action", result));
+
+        Assert.Equal(WorkIqFailure.Forbidden, error.Failure);
+        Assert.Equal(403, error.StatusCode);
+        Assert.DoesNotContain("secret transfer URL", error.ToString());
+    }
+
+    [Theory]
+    [InlineData(true, 404, WorkIqFailure.NotFound)]
+    [InlineData(false, 404, WorkIqFailure.NotFound)]
+    [InlineData(true, 400, WorkIqFailure.BadRequest)]
+    [InlineData(true, 403, WorkIqFailure.Forbidden)]
+    public void File_preparation_errors_use_the_provider_status_inside_a_200_envelope(bool structured, int code, WorkIqFailure failure)
+    {
+        // The shape Work IQ returns for a file ID the provider can't find.
+        var body = $$"""{"data":[{"type":"text","text":"{\r\n  \"Error\": \"Tool Request Failed\",\r\n  \"StatusCode\": {{code}},\r\n  \"ResponseContent\": \"secret transfer URL\"\r\n,\"ErrorType\":\"ClientError\"}"}],"statusCode":200,"isError":true,"requestId":"r"}""";
+        var result = new CallToolResult
+        {
+            IsError = true,
+            StructuredContent = structured ? FakeWorkIq.Json(body) : null,
+            Content = structured ? [] : [new TextContentBlock { Text = body }],
+        };
+
+        var error = Assert.Throws<WorkIqFileTransferException>(() => WorkIqEnvelope.TransferData("call_function", result));
+
+        Assert.Equal(failure, error.Failure);
+        Assert.Equal(code, error.StatusCode);
+        Assert.DoesNotContain("secret transfer URL", error.ToString());
+    }
+
+    [Fact]
+    public void A_file_preparation_error_without_a_failing_status_reports_no_status()
+    {
+        var result = new CallToolResult
+        {
+            IsError = true,
+            StructuredContent = FakeWorkIq.Json("""{"data":[{"type":"text","text":"failed"}],"statusCode":200,"isError":true}"""),
+            Content = [],
+        };
+
+        var error = Assert.Throws<WorkIqFileTransferException>(() => WorkIqEnvelope.TransferData("call_function", result));
+
+        Assert.Equal(WorkIqFailure.Unavailable, error.Failure);
+        Assert.Null(error.StatusCode);
+    }
+
     [Fact]
     public void Encodes_sharing_urls_the_way_graph_documents()
     {

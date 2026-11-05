@@ -10,11 +10,12 @@ namespace IncidentAgent.WorkIq;
 /// Work IQ over MCP (Streamable HTTP), called with the agent user's token. One MCP session per instance; create one
 /// per piece of work with <see cref="WorkIqClientFactory"/>.
 /// </summary>
-public sealed class WorkIqClient(
+public sealed partial class WorkIqClient(
     HttpClient httpClient,
     WorkIqOptions options,
     Func<CancellationToken, Task<string>> accessToken,
-    ILogger logger) : IWorkIq, IAsyncDisposable
+    ILogger logger,
+    HttpClient fileTransferHttpClient) : IWorkIq, IAsyncDisposable
 {
     private readonly SemaphoreSlim _connect = new(1, 1);
     private McpClient? _client;
@@ -59,7 +60,7 @@ public sealed class WorkIqClient(
         _connect.Dispose();
     }
 
-    private async Task<CallToolResult> CallToolAsync(string tool, Dictionary<string, object?> args, CancellationToken cancellationToken)
+    private async Task<CallToolResult> CallToolAsync(string tool, Dictionary<string, object?> args, CancellationToken cancellationToken, bool sensitiveResult = false)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(options.TimeoutSeconds));
@@ -74,13 +75,15 @@ public sealed class WorkIqClient(
         }
         catch (HttpRequestException ex)
         {
-            logger.LogWarning(ex, "Work IQ {Tool} transport failure ({Status})", tool, ex.StatusCode);
-            throw new WorkIqException(WorkIqException.KindFor(ex.StatusCode), $"Work IQ {tool} failed ({(int?)ex.StatusCode ?? 0}).", (int?)ex.StatusCode, ex);
+            logger.LogWarning(sensitiveResult ? null : ex, "Work IQ {Tool} transport failure ({Status})", tool, ex.StatusCode);
+            throw new WorkIqException(WorkIqException.KindFor(ex.StatusCode), $"Work IQ {tool} failed ({(int?)ex.StatusCode ?? 0}).", (int?)ex.StatusCode, sensitiveResult ? null : ex);
         }
         catch (McpException ex)
         {
-            logger.LogWarning(ex, "Work IQ {Tool} MCP error", tool);
-            throw new WorkIqException(WorkIqFailure.Unavailable, $"Work IQ {tool} error: {ex.Message}", inner: ex);
+            logger.LogWarning(sensitiveResult ? null : ex, "Work IQ {Tool} MCP error", tool);
+            throw new WorkIqException(WorkIqFailure.Unavailable,
+                sensitiveResult ? $"Work IQ {tool} could not prepare the file transfer. Check provider availability and authorization." : $"Work IQ {tool} error: {ex.Message}",
+                inner: sensitiveResult ? null : ex);
         }
     }
 
@@ -124,6 +127,33 @@ public sealed record WorkIqPayload(JsonElement? Json, IReadOnlyList<string> Text
 
 public static class WorkIqEnvelope
 {
+    internal static JsonElement TransferData(string tool, CallToolResult result)
+    {
+        var payload = Payload(result);
+        var status = payload.Json is { } json && json.TryGetProperty("statusCode", out var sc)
+            && sc.ValueKind == JsonValueKind.Number && sc.TryGetInt32(out var code) ? code : 0;
+        if (result.IsError is true || status is < 200 or >= 300)
+        {
+            // A provider failure can arrive as a 200 envelope marked isError, with the provider's status in a nested text item.
+            if (status is 0 or (>= 200 and < 300) && ProviderStatus(payload.Json) is { } provider)
+            {
+                status = provider;
+            }
+
+            int? reported = status is 0 or (>= 200 and < 300) ? null : status;
+            throw new WorkIqFileTransferException(reported is { } s ? WorkIqException.KindFor((System.Net.HttpStatusCode)s) : WorkIqFailure.Unavailable,
+                $"Work IQ {tool} could not prepare the file transfer ({reported ?? 0}). Check provider availability and authorization.",
+                statusCode: reported);
+        }
+
+        if (payload.Json is not { } root || !root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+        {
+            throw new WorkIqFileTransferException(WorkIqFailure.Unavailable, "Work IQ returned no supported file-transfer data. Check provider bindings and response conversion.");
+        }
+
+        return data;
+    }
+
     public static WorkIqPayload FromToolResult(string tool, CallToolResult result)
     {
         var payload = Payload(result);
@@ -280,6 +310,26 @@ public static class WorkIqEnvelope
         }
 
         return new WorkIqPayload(json, blocks);
+    }
+
+    private static int? ProviderStatus(JsonElement? root)
+    {
+        if (root is not { } r || !r.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        foreach (var item in data.EnumerateArray())
+        {
+            if (TryParseObject(Str(item, "text"), out var inner)
+                && (inner.TryGetProperty("StatusCode", out var sc) || inner.TryGetProperty("statusCode", out sc))
+                && sc.ValueKind == JsonValueKind.Number && sc.TryGetInt32(out var code) && code is >= 400 and < 600)
+            {
+                return code;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Tool errors come back as <c>{"error":"…","requestId":"…"}</c> text.</summary>
